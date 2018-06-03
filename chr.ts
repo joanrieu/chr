@@ -8,6 +8,19 @@ class ConstraintStore extends Set<number[]> {
     }
 
     add(constraint: number[]) {
+        let iterators = [this.applyConstraint(constraint)]
+        while (iterators.length > 0) {
+            const it = iterators[iterators.length - 1]
+            const { done, value: newConstraint } = it.next()
+            if (newConstraint)
+                iterators.push(this.applyConstraint(newConstraint))
+            else if (done)
+                iterators.pop()
+        }
+        return this
+    }
+
+    *applyConstraint(constraint: number[]) {
         let drop = false
         for (const rule of this.rules) {
             for (const newConstraint of rule(this, ...constraint)) {
@@ -16,14 +29,13 @@ class ConstraintStore extends Set<number[]> {
                 else if (newConstraint === false)
                     throw new Error(rule.name + " ==> false")
                 else
-                    this.add(newConstraint)
+                    yield newConstraint
             }
             if (drop)
                 break
         }
         if (!drop)
             super.add(constraint)
-        return this
     }
 
     toString(terms: object) {
@@ -101,4 +113,4 @@ namespace Primes {
 }
 
 console.log(new ConstraintStore(Counter.rules).add([Counter.upto, 10]).toString(Counter));
-console.log(new ConstraintStore(Primes.rules).add([Primes.upto, 10]).toString(Primes));
+console.log(new ConstraintStore(Primes.rules).add([Primes.upto, 10000]).toString(Primes));
