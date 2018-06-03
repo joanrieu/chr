@@ -1,27 +1,28 @@
 class ConstraintStore extends Set<number[]> {
 
-    private queue: number[][] = []
-
     constructor(
-        readonly rules: ((store: ConstraintStore, ...constraint: number[]) => void)[]
+        readonly rules: ((store: ConstraintStore, ...constraint: number[])
+            => IterableIterator<number[] | boolean>)[]
     ) {
         super()
     }
 
     add(constraint: number[]) {
-        this.queue.push(constraint)
-        while (this.queue.length > 0) {
-            const constraint = this.queue.shift()
-            let keep = true
-            for (const rule of this.rules) {
-                if (rule(this, ...constraint)) {
-                    keep = false
-                    break
-                }
+        let drop = false
+        for (const rule of this.rules) {
+            for (const newConstraint of rule(this, ...constraint)) {
+                if (newConstraint === true)
+                    drop = true
+                else if (newConstraint === false)
+                    throw new Error(rule.name + " ==> false")
+                else
+                    this.add(newConstraint)
             }
-            if (keep)
-                super.add(constraint)
+            if (drop)
+                break
         }
+        if (!drop)
+            super.add(constraint)
         return this
     }
 
@@ -48,24 +49,22 @@ namespace Counter {
 
     export const rules = [
 
-        function start_rule(store: ConstraintStore, term: Counter, N: number) {
+        function* start_rule(store: ConstraintStore, term: Counter, N: number) {
             if (term === Counter.upto) {
-                store.add([Counter.count, 0, N])
-                return true
+                yield [Counter.count, 0, N]
+                yield true
             }
         },
 
-        function count_rule(store: ConstraintStore, term: Counter, I: number, N: number) {
-            if (term === Counter.count) {
-                if (I < N)
-                    store.add([Counter.count, I + 1, N])
-            }
+        function* count_rule(store: ConstraintStore, term: Counter, I: number, N: number) {
+            if (term === Counter.count && I < N)
+                yield [Counter.count, I + 1, N]
         },
 
-        function counted_rule(store: ConstraintStore, term: Counter, I: number, N: number) {
+        function* counted_rule(store: ConstraintStore, term: Counter, I: number, N: number) {
             if (term === Counter.count) {
-                store.add([Counter.counted, I])
-                return true
+                yield [Counter.counted, I]
+                yield true
             }
         }
 
@@ -82,19 +81,19 @@ namespace Primes {
 
     export const rules = [
 
-        function gen_rule(store: ConstraintStore, term: Primes, N: number) {
+        function* gen_rule(store: ConstraintStore, term: Primes, N: number) {
             if (term === Primes.upto && N > 1) {
-                store.add([Primes.upto, N - 1])
-                store.add([Primes.prime, N])
-                return true
+                yield [Primes.upto, N - 1]
+                yield [Primes.prime, N]
+                yield true
             }
         },
 
-        function sift_rule(store: ConstraintStore, term: Primes, Y: number) {
+        function* sift_rule(store: ConstraintStore, term: Primes, Y: number) {
             if (term === Primes.prime)
                 for (const [term2, X] of store.values())
                     if (term2 === Primes.prime && Y % X === 0)
-                        return true
+                        yield true
         }
 
     ]
