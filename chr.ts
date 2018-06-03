@@ -1,132 +1,105 @@
-const assert = condition => { if (!condition) throw new Error("✖️✖️✖️") }
+class ConstraintStore extends Set<number[]> {
 
-class System {
+    private queue: number[][] = []
+
     constructor(
-        readonly rules: Rule[],
-        readonly constraints: Constraint[]
-    ) { }
-
-    toString() {
-        return this.rules.join("\n")
+        readonly rules: ((store: ConstraintStore, ...constraint: number[]) => void)[]
+    ) {
+        super()
     }
 
-    static fromString(str: string) {
-        const [rules, constraints] = str.split("\n---\n", 2)
-        return new System(
-            rules.split("\n").filter(l => !!l).map(Rule.fromString),
-            constraints ? constraints.split("\n").map(Constraint.fromString) : []
-        )
+    add(constraint: number[]) {
+        this.queue.push(constraint)
+        while (this.queue.length > 0) {
+            const constraint = this.queue.shift()
+            let keep = true
+            for (const rule of this.rules) {
+                if (rule(this, ...constraint)) {
+                    keep = false
+                    break
+                }
+            }
+            if (keep)
+                super.add(constraint)
+        }
+        return this
     }
+
+    toString(terms: object) {
+        const rows = []
+        for (const [term, ...values] of this) {
+            const name = terms ? Object.entries(terms).find(([k, v]) => v === term)[0] : "_" + term
+            rows.push(name + "(" + values.join(", ") + ")")
+        }
+        return rows.join("\n")
+    }
+
 }
 
-class Rule {
-    constructor(
-        readonly name: string,
-        readonly kept_heads: Constraint[],
-        readonly removed_heads: Constraint[],
-        readonly guards: Guard[],
-        readonly body: Constraint[]
-    ) { }
+// --------------------------------------------------------------------------------- //
 
-    toString() {
-        let str = ""
-        str += this.name || "_"
-        str += " @ "
-        str += this.kept_heads.join(", ") || "_"
-        str += " \\ "
-        str += this.removed_heads.join(", ") || "_"
-        str += " | "
-        str += this.guards.join(", ") || "_"
-        str += " <=> "
-        str += this.body.join(", ") || "_"
-        return str
-    }
-
-    static fromString(str: string) {
-        const [name, rule] = str.replace(/ /g, "").split("@", 2)
-        const [lhs, rhs] = rule.split("<=>", 2)
-        const [heads, guards] = lhs.split("|", 2)
-        const [kept, removed] = heads.split("\\", 2)
-        return new Rule(
-            name,
-            (kept + ",").split("),").slice(0, -1).map(Constraint.fromString),
-            (removed + ",").split("),").slice(0, -1).map(Constraint.fromString),
-            guards.split(",").map(Guard.fromString),
-            (rhs + ",").split("),").slice(0, -1).map(Constraint.fromString),
-        )
-    }
+enum Counter {
+    upto,
+    count,
+    counted
 }
 
-class Constraint {
-    constructor(
-        readonly name: string,
-        readonly body: Variable[]
-    ) { }
+namespace Counter {
 
-    toString() {
-        return this.name + "(" + this.body.join(", ") + ")"
-    }
+    export const rules = [
 
-    static fromString(str: string) {
-        return new Constraint(
-            str.slice(0, str.indexOf("(")),
-            str.slice(str.indexOf("(") + 1).split(",").map(Variable.fromString)
-        )
-    }
+        function start_rule(store: ConstraintStore, term: Counter, N: number) {
+            if (term === Counter.upto) {
+                store.add([Counter.count, 0, N])
+                return true
+            }
+        },
+
+        function count_rule(store: ConstraintStore, term: Counter, I: number, N: number) {
+            if (term === Counter.count) {
+                if (I < N)
+                    store.add([Counter.count, I + 1, N])
+            }
+        },
+
+        function counted_rule(store: ConstraintStore, term: Counter, I: number, N: number) {
+            if (term === Counter.count) {
+                store.add([Counter.counted, I])
+                return true
+            }
+        }
+
+    ]
+
 }
 
-class Variable {
-    constructor(
-        readonly name: string
-    ) { }
-
-    toString() {
-        return this.name
-    }
-
-    static fromString(str: string) {
-        return new Variable(str)
-    }
+enum Primes {
+    upto,
+    prime
 }
 
-class Constant {
-    constructor(
-        readonly value: any
-    ) { }
+namespace Primes {
 
-    toString() {
-        return this.value
-    }
+    export const rules = [
 
-    static fromString(str: string) {
-        return new Constant(str)
-    }
+        function gen_rule(store: ConstraintStore, term: Primes, N: number) {
+            if (term === Primes.upto && N > 1) {
+                store.add([Primes.upto, N - 1])
+                store.add([Primes.prime, N])
+                return true
+            }
+        },
+
+        function sift_rule(store: ConstraintStore, term: Primes, Y: number) {
+            if (term === Primes.prime)
+                for (const [term2, X] of store.values())
+                    if (term2 === Primes.prime && Y % X === 0)
+                        return true
+        }
+
+    ]
+
 }
 
-class Guard {
-    constructor(
-        readonly lhs: Variable,
-        readonly op: ">" | ">=" | "=" | "!=" | "<=" | "<",
-        readonly rhs: Constant
-    ) { }
-
-    toString() {
-        return this.lhs + " " + this.op + " " + this.rhs
-    }
-
-    static fromString(str: string) {
-        const [all, lhs, op, rhs] = str.match(/^(.+)(>|>=|=|!=|<=|<)(.+)$/)
-        return new Guard(
-            Variable.fromString(lhs),
-            op as typeof Guard.prototype.op,
-            Constant.fromString(rhs)
-        )
-    }
-}
-
-const system = System.fromString(`
-start @ \\ upto(N) | N > 0 <=> count(0, N)
-count @ count(I, N) \\ | I < N <=> count(I + 1, N)
-`)
-
-console.log(system.rules[1].body[0])
+console.log(new ConstraintStore(Counter.rules).add([Counter.upto, 10]).toString(Counter));
+console.log(new ConstraintStore(Primes.rules).add([Primes.upto, 10]).toString(Primes));
