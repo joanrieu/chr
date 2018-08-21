@@ -1,5 +1,3 @@
-const raw_rule = `prime(I), prime(J) <=> J % I !== 0, I !== 1 | prime(I), notprime(J)`
-
 type Parse<T = { [k: string]: any }> = ({ i: number } & T) | undefined
 
 class Parser {
@@ -16,7 +14,10 @@ class Parser {
     }
 
     parse() {
-        return this.rule({ i: 0 })
+        const parse = this.rule({ i: 0 })
+        if (!parse || parse.i < this.tokens.length)
+            throw new Error("invalid rule: " + this.tokens.join(" "))
+        return parse
     }
 
     rule(parse: Parse) {
@@ -77,7 +78,13 @@ class Parser {
         if (end) return { i: end.i, guards: parse.guards || []}
         const token = this.token(null, parse)
         const guards = this.guards_expr(token)
-        return token && guards && { i: guards.i, guards: [token.token, ...guards.guards] }
+        return token && guards && {
+            i: guards.i,
+            guards: [
+                (this.identifier(parse) ? "this." : "") + token.token,
+                ...guards.guards
+            ]
+        }
     }
 
     operation(parse: Parse) {
@@ -95,9 +102,90 @@ class Parser {
 
     identifier(parse: Parse) {
         if (!parse) return
-        if (!this.tokens[parse.i].match(/^\w+$/)) return
+        if (!this.tokens[parse.i].match(/^[a-zA-Z]+$/)) return
         return { i: parse.i + 1, identifier: this.tokens[parse.i] }
     }
 }
 
-console.log(JSON.stringify(new Parser(raw_rule).parse(), null, 4))
+type Rule = {
+    constraints_in: Constraint[],
+    operation: string,
+    guards: string,
+    constraints_out: Constraint[],
+}
+
+type Constraint = {
+    name: string,
+    args: string[]
+}
+
+function build_rule(rule: Rule) {
+    const fns = [
+        ...rule.constraints_in.map(build_constraint),
+        build_guard(rule.guards)
+    ]
+    let fn = build_inserter(rule)
+    while (fns.length)
+        fn = fns.pop()!(fn)
+    return () => fn({})
+}
+
+const MATCHED_CONSTRAINTS = Symbol.for("MATCHED_CONSTRAINTS")
+
+function build_constraint(constraint: Constraint) {
+    return (next: (ctx: any) => void) => (ctx: any) => {
+        for (const stored of constraint_store) {
+            if (stored.name === constraint.name) {
+                const nextCtx = {
+                    ...ctx,
+                    [MATCHED_CONSTRAINTS]: [...(ctx[MATCHED_CONSTRAINTS] || []), stored]
+                }
+                for (let i = 0; i < constraint.args.length; ++i)
+                    nextCtx[constraint.args[i]] = stored.args[i]
+                next(nextCtx)
+            }
+        }
+    }
+}
+
+function build_guard(guard: string) {
+    const fn = new Function("return " + guard)
+    return (next: (ctx: any) => void) => (ctx: any) => {
+        if (fn.call(ctx))
+            next(ctx)
+    }
+}
+
+function build_inserter(rule: Rule) {
+    return (ctx: any) => {
+        if (rule.operation === "<=>")
+            for (const stored of ctx[MATCHED_CONSTRAINTS])
+                constraint_store.splice(constraint_store.indexOf(stored), 1)
+        constraint_store.push(...rule.constraints_out.map(constraint => ({
+            name: constraint.name,
+            args: constraint.args.map(arg => ctx[arg])
+        })))
+        constraint_store.dirty = true
+    }
+}
+
+const rules = `
+upto(N) <=> N > 1, (M = N - 1) | upto(M), prime(N)
+prime(X), prime(Y) <=> Y > X, Y % X === 0 | prime(X)
+`
+    .split("\n")
+    .filter(r => r.trim())
+    .map(r => new Parser(r).parse() as Rule)
+    .map(build_rule)
+
+const constraint_store = Object.assign([
+    { name: "upto", args: [ 100 ] }
+], { dirty: true })
+
+while (constraint_store.dirty) {
+    constraint_store.dirty = false
+    for (const rule of rules)
+        rule()
+}
+
+console.log(constraint_store.map(c => c.name + "(" + c.args.join(", ") + ")").join("\n"))
