@@ -1,125 +1,3 @@
-type Parse<T = { [k: string]: any }> = ({ i: number } & T) | undefined
-
-class Parser {
-    tokens: string[]
-
-    constructor(rule: string) {
-        this.tokens = this.tokenize(rule)
-    }
-
-    tokenize(rule: string) {
-        return rule
-            .trim()
-            .replace(/\n+/g, ";")
-            .split(/\s*(\w+|\||,|\(|\)|;)\s*/)
-            .filter(part => part)
-    }
-
-    parse() {
-        const parse = this.rules({ i: 0 })
-        if (!parse || parse.i < this.tokens.length)
-            throw new Error("invalid rule: " + this.tokens.join(" "))
-        return parse
-    }
-
-    rules(parse: Parse): Parse<{ rules: any[] }> {
-        if (!parse) return
-        const rule = this.rule(parse)
-        const rules = this.rules(this.token(";", rule))
-        return rule && {
-            i: (rules || rule).i,
-            rules: [rule, ...(rules ? rules.rules : [])]
-        }
-    }
-
-    rule(parse: Parse) {
-        if (!parse) return
-        const constraints_in = this.constraints(parse)
-        const operation = this.operation(constraints_in)
-        const guards = this.guards(operation)
-        const constraints_out = this.constraints(guards)
-        return constraints_in && operation && guards && constraints_out && {
-            i: constraints_out.i,
-            constraints_in: constraints_in.constraints,
-            operation: operation.operation,
-            guards: guards.guards,
-            constraints_out: constraints_out.constraints
-        }
-    }
-
-    constraints(parse: Parse): Parse<{ constraints: any[] }> {
-        if (!parse) return
-        const constraint = this.constraint(parse)
-        const constraints = this.constraints(this.token(",", constraint))
-        return constraint && {
-            i: (constraints || constraint).i,
-            constraints: [constraint, ...(constraints ? constraints.constraints : [])]
-        }
-    }
-
-    constraint(parse: Parse) {
-        if (!parse) return
-        const name = this.identifier(parse)
-        const lp = this.token("(", name)
-        const args = this.constraint_args(lp)
-        const rp = this.token(")", args)
-        return name && lp && args && rp && {
-            i: rp.i,
-            name: name.identifier,
-            args: args.args
-        }
-    }
-
-    constraint_args(parse: Parse): Parse<{ args: any[] }> {
-        if (!parse) return
-        const arg = this.identifier(parse)
-        const args = this.constraint_args(this.token(",", arg))
-        return arg && {
-            i: (args || arg).i,
-            args: [arg.identifier, ...(args ? args.args : [])]
-        }
-    }
-
-    guards(parse: Parse): Parse<{ guards: string }> {
-        const guards = this.guards_expr(parse)
-        return guards && { i: guards.i, guards: guards.guards.join(" ").replace(/,/g, "&&") }
-    }
-
-    guards_expr(parse: Parse): Parse<{ guards: any[] }> {
-        if (!parse) return
-        const end = this.token("|", parse)
-        if (end) return { i: end.i, guards: parse.guards || []}
-        const token = this.token(null, parse)
-        const guards = this.guards_expr(token)
-        return token && guards && {
-            i: guards.i,
-            guards: [
-                (this.identifier(parse) ? "this." : "") + token.token,
-                ...guards.guards
-            ]
-        }
-    }
-
-    operation(parse: Parse) {
-        if (!parse) return
-        const operation = this.token("<=>", parse) || this.token("==>", parse)
-        return operation && { i: operation.i, operation: operation.token }
-    }
-
-    token(expected: string | null, parse: Parse) {
-        if (!parse) return
-        const actual = this.tokens[parse.i]
-        if (expected && actual !== expected) return
-        return { i: parse.i + 1, token: actual }
-    }
-
-    identifier(parse: Parse) {
-        if (!parse) return
-        if (!this.tokens[parse.i].match(/^[a-zA-Z]+$/)) return
-        return { i: parse.i + 1, identifier: this.tokens[parse.i] }
-    }
-}
-
 type Rule = {
     constraints_in: Constraint[],
     operation: string,
@@ -130,6 +8,124 @@ type Rule = {
 type Constraint = {
     name: string,
     args: string[]
+}
+
+type Parse<T = { [k: string]: any }> = ({ tokens: string[] } & T) | undefined
+
+class Parser {
+    static parseRules(rules: string) {
+        const tokens = this.tokenize(rules)
+        const parse = Parser.rules({ tokens })
+        if (!parse || parse.tokens.length > 0)
+            throw new Error("parse error: " + tokens.join(" "))
+        return parse.rules as Rule[]
+    }
+
+    private static tokenize(rules: string) {
+        return rules
+            .trim()
+            .replace(/\n+/g, ";")
+            .split(/\s*(\w+|\||,|\(|\)|;)\s*/)
+            .filter(part => part)
+    }
+
+    private static rules(parse: Parse): Parse<{ rules: any[] }> {
+        if (!parse) return
+        const rule = this.rule(parse)
+        const rules = this.rules(this.token(";", rule))
+        return rule && {
+            tokens: (rules || rule).tokens,
+            rules: [rule, ...(rules ? rules.rules : [])]
+        }
+    }
+
+    private static rule(parse: Parse): Parse<{ constraints_in: any[]; operation: string; guards: string; constraints_out: any[] }> {
+        if (!parse) return
+        const constraints_in = this.constraints(parse)
+        const operation = this.operation(constraints_in)
+        const guards = this.guards(operation)
+        const constraints_out = this.constraints(guards)
+        return constraints_in && operation && guards && constraints_out && {
+            tokens: constraints_out.tokens,
+            constraints_in: constraints_in.constraints,
+            operation: operation.operation,
+            guards: guards.guards,
+            constraints_out: constraints_out.constraints
+        }
+    }
+
+    private static constraints(parse: Parse): Parse<{ constraints: any[] }> {
+        if (!parse) return
+        const constraint = this.constraint(parse)
+        const constraints = this.constraints(this.token(",", constraint))
+        return constraint && {
+            tokens: (constraints || constraint).tokens,
+            constraints: [constraint, ...(constraints ? constraints.constraints : [])]
+        }
+    }
+
+    private static constraint(parse: Parse): Parse<{ name: string, args: any[] }> {
+        if (!parse) return
+        const name = this.identifier(parse)
+        const lp = this.token("(", name)
+        const args = this.constraint_args(lp)
+        const rp = this.token(")", args)
+        return name && lp && args && rp && {
+            tokens: rp.tokens,
+            name: name.identifier,
+            args: args.args
+        }
+    }
+
+    private static constraint_args(parse: Parse): Parse<{ args: any[] }> {
+        if (!parse) return
+        const arg = this.identifier(parse)
+        const args = this.constraint_args(this.token(",", arg))
+        return arg && {
+            tokens: (args || arg).tokens,
+            args: [arg.identifier, ...(args ? args.args : [])]
+        }
+    }
+
+    private static guards(parse: Parse): Parse<{ guards: string }> {
+        const guards = this.guards_expr(parse)
+        return guards && { tokens: guards.tokens, guards: guards.guards.join(" ").replace(/,/g, "&&") }
+    }
+
+    private static guards_expr(parse: Parse): Parse<{ guards: any[] }> {
+        if (!parse) return
+        const end = this.token("|", parse)
+        if (end) return { tokens: end.tokens, guards: parse.guards || []}
+        const token = this.token(null, parse)
+        const guards = this.guards_expr(token)
+        return token && guards && {
+            tokens: guards.tokens,
+            guards: [
+                (this.identifier(parse) ? "this." : "") + token.token,
+                ...guards.guards
+            ]
+        }
+    }
+
+    private static operation(parse: Parse): Parse<{ operation: string }> {
+        if (!parse) return
+        const operation = this.token("<=>", parse) || this.token("==>", parse)
+        return operation && { tokens: operation.tokens, operation: operation.token }
+    }
+
+    private static token(expectedToken: string | null, parse: Parse): Parse<{ token: string }> {
+        if (!parse) return
+        const [token, ...tokens] = parse.tokens
+        if (expectedToken && token !== expectedToken) return
+        return { tokens, token }
+    }
+
+    private static identifier(parse: Parse): Parse<{ identifier: string }> {
+        if (!parse) return
+        const [identifier, ...tokens] = parse.tokens
+        if (!identifier.match(/^[a-zA-Z]+$/)) return
+        return { tokens, identifier }
+    }
 }
 
 function build_rule(rule: Rule) {
@@ -182,10 +178,10 @@ function build_inserter(rule: Rule) {
     }
 }
 
-const rules = new Parser(`
+const rules = Parser.parseRules(`
 upto(N) <=> N > 1, (M = N - 1) | upto(M), prime(N)
 prime(X), prime(Y) <=> Y > X, Y % X === 0 | prime(X)
-`).parse().rules as Rule[]
+`)
 
 const built_rules = rules.map(build_rule)
 
