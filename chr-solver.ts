@@ -9,18 +9,31 @@ class Parser {
 
     tokenize(rule: string) {
         return rule
-            .split(/\s*(\w+|\||\,|\(|\))\s*/)
+            .trim()
+            .replace(/\n+/g, ";")
+            .split(/\s*(\w+|\||,|\(|\)|;)\s*/)
             .filter(part => part)
     }
 
     parse() {
-        const parse = this.rule({ i: 0 })
+        const parse = this.rules({ i: 0 })
         if (!parse || parse.i < this.tokens.length)
             throw new Error("invalid rule: " + this.tokens.join(" "))
         return parse
     }
 
+    rules(parse: Parse): Parse<{ rules: any[] }> {
+        if (!parse) return
+        const rule = this.rule(parse)
+        const rules = this.rules(this.token(";", rule))
+        return rule && {
+            i: (rules || rule).i,
+            rules: [rule, ...(rules ? rules.rules : [])]
+        }
+    }
+
     rule(parse: Parse) {
+        if (!parse) return
         const constraints_in = this.constraints(parse)
         const operation = this.operation(constraints_in)
         const guards = this.guards(operation)
@@ -169,14 +182,12 @@ function build_inserter(rule: Rule) {
     }
 }
 
-const rules = `
+const rules = new Parser(`
 upto(N) <=> N > 1, (M = N - 1) | upto(M), prime(N)
 prime(X), prime(Y) <=> Y > X, Y % X === 0 | prime(X)
-`
-    .split("\n")
-    .filter(r => r.trim())
-    .map(r => new Parser(r).parse() as Rule)
-    .map(build_rule)
+`).parse().rules as Rule[]
+
+const built_rules = rules.map(build_rule)
 
 const constraint_store = Object.assign([
     { name: "upto", args: [ 100 ] }
@@ -184,7 +195,7 @@ const constraint_store = Object.assign([
 
 while (constraint_store.dirty) {
     constraint_store.dirty = false
-    for (const rule of rules)
+    for (const rule of built_rules)
         rule()
 }
 
