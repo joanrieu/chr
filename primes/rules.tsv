@@ -1,0 +1,3 @@
+count  	int X   	 undone             	(Y=X+1), prime X, int Y
+stop   	int X, undone   	(X > 50)               	done
+divide 	prime X 	prime Y, (X % Y === 0) 	true

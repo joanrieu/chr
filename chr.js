@@ -1,18 +1,29 @@
 const fs = require("fs");
 const assert = require("assert");
-const util = require("util");
 
 function buildConstraint(constraint) {
-  constraint = constraint.trim().split(/\s+|\b/);
-  const variables = [];
+  let variables = [];
+  const regex = /^([A-Z0-9]+|[0-9]+)$/;
   const name = constraint
+    .trim()
+    .split(/\s+|\b/)
     .map(word =>
-      word.match(/^[A-Z]\w*$/)
-        ? "_" + (variables.push(word), variables.length)
+      word.match(regex)
+        ? "_" +
+          (variables.push(isNaN(parseInt(word)) ? word : parseInt(word)),
+          variables.length)
         : word
     )
     .join(" ");
-  constraint = { name, variables };
+  let expression = constraint.trim().match(/^\(.+\)$/);
+  if (expression)
+    expression = new Function(
+      "variables",
+      "return " +
+        name.replace(/\b_\d+\b/g, x => "variables[" + (x.slice(1) - 1) + "]")
+    );
+  constraint = { name, variables, expression };
+  // console.log(constraint);
   return constraint;
 }
 
@@ -21,11 +32,34 @@ function buildChainableConstraint(prototype, remove = false) {
     return {
       [prototype.name](
         store,
-        used_constraints,
         removable_constraints,
         addable_constraints,
+        used_constraints,
         bound_variables
       ) {
+        if (prototype.expression) {
+          assert(!remove);
+          const orig_variables = prototype.variables.map(name =>
+            typeof name === "string" ? bound_variables.get(name) : name
+          );
+          const variables = [...orig_variables];
+          // in gard: only proceed if truthy
+          // console.log(prototype.name, variables);
+          if (prototype.expression.call(undefined, variables)) {
+            const new_bound_variables = new Map(bound_variables);
+            prototype.variables.forEach((name, i) => {
+              if (variables[i] !== orig_variables[i])
+                new_bound_variables.set(name, variables[i]);
+            });
+            return cb(
+              store,
+              removable_constraints,
+              addable_constraints,
+              used_constraints,
+              new_bound_variables
+            );
+          }
+        }
         for (const candidate of store) {
           if (
             candidate.name === prototype.name &&
@@ -50,9 +84,9 @@ function buildChainableConstraint(prototype, remove = false) {
               continue;
             cb(
               store,
-              new_used_constraints,
               new_removable_constraints,
               addable_constraints,
+              new_used_constraints,
               new_bound_variables
             );
           }
@@ -67,11 +101,31 @@ function buildChainableBody(prototype) {
     return {
       [prototype.name](
         store,
-        used_constraints,
         removable_constraints,
         addable_constraints,
+        used_constraints,
         bound_variables
       ) {
+        if (prototype.expression) {
+          const orig_variables = prototype.variables.map(name =>
+            typeof name === "string" ? bound_variables.get(name) : name
+          );
+          const variables = [...orig_variables];
+          // in body: run side effects without checking the return value
+          prototype.expression.call(undefined, variables);
+          const new_bound_variables = new Map(bound_variables);
+          prototype.variables.forEach((name, i) => {
+            if (variables[i] !== orig_variables[i])
+              new_bound_variables.set(name, variables[i]);
+          });
+          return cb(
+            store,
+            removable_constraints,
+            addable_constraints,
+            used_constraints,
+            new_bound_variables
+          );
+        }
         const new_addable_constraints = new Set(addable_constraints);
         const constraint = {
           name: prototype.name,
@@ -80,9 +134,9 @@ function buildChainableBody(prototype) {
         new_addable_constraints.add(constraint);
         cb(
           store,
-          used_constraints,
           removable_constraints,
           new_addable_constraints,
+          used_constraints,
           bound_variables
         );
       }
@@ -98,46 +152,48 @@ function buildRule(rule) {
   for (const constraint of guards)
     chain.push(buildChainableConstraint(constraint));
   for (const constraint of body) chain.push(buildChainableBody(constraint));
-  let action;
-  chain = chain.reduceRight(
-    (tail, head) => head(tail),
-    (
-      store,
-      used_constraints,
-      removable_constraints,
-      addable_constraints,
-      bound_variables
-    ) => {
-      // console.log(name, "success");
-      for (const constraint of removable_constraints) {
-        // console.log("removing from store", constraint);
-        store.splice(store.indexOf(constraint), 1);
-        action = true;
-      }
+  return {
+    [name](store) {
+      // console.log("trying", name);
+      const addable_constraints = new Set();
+      let action = false;
+      chain.reduceRight(
+        (tail, head) => head(tail),
+        (
+          store,
+          removable_constraints,
+          new_addable_constraints,
+          used_constraints,
+          bound_variables
+        ) => {
+          // console.log(name, "successful");
+          for (const constraint of removable_constraints) {
+            if (store.includes(constraint)) {
+              // console.log("removing from store", constraint);
+              store.splice(store.indexOf(constraint), 1);
+              action = true;
+            }
+          }
+          for (const constraint of new_addable_constraints)
+            addable_constraints.add(constraint);
+        }
+      )(store, new Set(), new Set(), new Set(), new Map());
       for (const constraint of addable_constraints) {
-        if (
-          constraint.name !== "true" &&
-          !store.some(
-            other =>
-              other.name === constraint.name &&
-              other.variables.join() === constraint.variables.join()
-          )
-        ) {
+        if (constraint.name !== "true") {
           // console.log("adding to store", constraint);
           store.unshift(constraint);
           action = true;
         }
       }
-    }
-  );
-  return {
-    [name](store) {
-      // console.log("trying", name);
-      action = false;
-      chain(store, new Set(), new Set(), new Set(), new Map());
       return action;
     }
   }[name];
+}
+
+function applyRules(rules, store) {
+  let action = false;
+  for (const rule of rules) action = rule(store) || action;
+  return action;
 }
 
 let rules = process.argv[2];
@@ -212,7 +268,7 @@ function printStore(store) {
 
 let round = 0;
 printStore(store);
-while (rules.filter(rule => rule(store)).length) {
+while (applyRules(rules, store)) {
   console.log();
   console.log("round", ++round);
   printStore(store);
