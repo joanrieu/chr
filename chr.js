@@ -37,29 +37,6 @@ function buildChainableConstraint(prototype, remove = false) {
         used_constraints,
         bound_variables
       ) {
-        if (prototype.expression) {
-          assert(!remove);
-          const orig_variables = prototype.variables.map(name =>
-            typeof name === "string" ? bound_variables.get(name) : name
-          );
-          const variables = [...orig_variables];
-          // in gard: only proceed if truthy
-          // console.log(prototype.name, variables);
-          if (prototype.expression.call(undefined, variables)) {
-            const new_bound_variables = new Map(bound_variables);
-            prototype.variables.forEach((name, i) => {
-              if (variables[i] !== orig_variables[i])
-                new_bound_variables.set(name, variables[i]);
-            });
-            return cb(
-              store,
-              removable_constraints,
-              addable_constraints,
-              used_constraints,
-              new_bound_variables
-            );
-          }
-        }
         for (const candidate of store) {
           if (
             candidate.name === prototype.name &&
@@ -106,26 +83,6 @@ function buildChainableBody(prototype) {
         used_constraints,
         bound_variables
       ) {
-        if (prototype.expression) {
-          const orig_variables = prototype.variables.map(name =>
-            typeof name === "string" ? bound_variables.get(name) : name
-          );
-          const variables = [...orig_variables];
-          // in body: run side effects without checking the return value
-          prototype.expression.call(undefined, variables);
-          const new_bound_variables = new Map(bound_variables);
-          prototype.variables.forEach((name, i) => {
-            if (variables[i] !== orig_variables[i])
-              new_bound_variables.set(name, variables[i]);
-          });
-          return cb(
-            store,
-            removable_constraints,
-            addable_constraints,
-            used_constraints,
-            new_bound_variables
-          );
-        }
         const new_addable_constraints = new Set(addable_constraints);
         const constraint = {
           name: prototype.name,
@@ -144,14 +101,53 @@ function buildChainableBody(prototype) {
   };
 }
 
+function buildChainableEvaluation(prototype, guard = false) {
+  return function(cb) {
+    return {
+      [prototype.name](
+        store,
+        removable_constraints,
+        addable_constraints,
+        used_constraints,
+        bound_variables
+      ) {
+        const values = prototype.variables.map(name =>
+          typeof name === "string" ? bound_variables.get(name) : name
+        );
+        // console.log(prototype.name, values);
+        const new_values = [...values];
+        if (prototype.expression.call(undefined, new_values) || !guard) {
+          const new_bound_variables = new Map(bound_variables);
+          prototype.variables.forEach((name, i) => {
+            if (new_values[i] !== values[i])
+              new_bound_variables.set(name, new_values[i]);
+          });
+          return cb(
+            store,
+            removable_constraints,
+            addable_constraints,
+            used_constraints,
+            new_bound_variables
+          );
+        }
+      }
+    }[prototype.name];
+  };
+}
+
 function buildRule(rule) {
   const { name, heads, guards, body } = rule;
   let chain = [];
   for (const constraint of heads)
-    chain.push(buildChainableConstraint(constraint, true));
+    if (constraint.expression) chain.push(buildChainableEvaluation(constraint));
+    else chain.push(buildChainableConstraint(constraint, true));
   for (const constraint of guards)
-    chain.push(buildChainableConstraint(constraint));
-  for (const constraint of body) chain.push(buildChainableBody(constraint));
+    if (constraint.expression)
+      chain.push(buildChainableEvaluation(constraint, true));
+    else chain.push(buildChainableConstraint(constraint));
+  for (const constraint of body)
+    if (constraint.expression) chain.push(buildChainableEvaluation(constraint));
+    else chain.push(buildChainableBody(constraint));
   return {
     [name](store) {
       // console.log("trying", name);
