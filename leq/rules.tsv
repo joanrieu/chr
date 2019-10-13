@@ -1,0 +1,4 @@
+reflexivity  	X <= X         	               	true
+transitivity 	               	X <= Y, Y <= Z 	X <= Z
+antisymmetry 	X <= Y, Y <= X 	               	X = Y
+idempotence  	X <= Y         	X <= Y         	true
